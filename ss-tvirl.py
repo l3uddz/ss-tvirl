@@ -184,9 +184,9 @@ def bridge(request_file):
                 request.args.get('channel')) < 10 else request.args.get('channel')
             logger.info("Channel %s playlist was requested by %s", sanitized_channel,
                         request.environ.get('REMOTE_ADDR'))
+            check_token()
             ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/playlist.m3u8?wmsAuthSign=%s==" % (
                 SRVR, SITE, sanitized_channel, token['hash'])
-            check_token()
             return redirect(ss_url, 302)
 
         else:
