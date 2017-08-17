@@ -81,7 +81,7 @@ If you want it to be automatically started on boot, you can use the included sys
 ```
 sudo cp system/sstv.service /etc/systemd/system
 sudo systemctl daemon-reload 
-sudo sytsemctl start sstv
+sudo systemctl start sstv
 sudo systemctl enable sstv
 ```
 
