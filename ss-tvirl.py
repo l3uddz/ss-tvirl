@@ -160,9 +160,10 @@ def remap_playlist(playlist):
     # build playlist using the data we have
     new_playlist = "#EXTM3U\n"
     for pos in range(1, len(chan_map) + 1):
-        channel_url = urljoin(SERVER_HOST, "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, pos))
+        channel_url = urljoin(SERVER_HOST, "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, chan_map[pos]['num']))
         new_playlist += '#EXTINF:-1 tvg-id="%s" tvg-name="%d" tvg-logo="%s" channel-id="%d",%s\n' % (
-            id_map[pos], pos, chan_map[pos]['logo'], pos, chan_map[pos]['name'])
+            id_map[chan_map[pos]['num']], chan_map[pos]['num'], chan_map[pos]['logo'], chan_map[pos]['num'],
+            chan_map[pos]['name'])
         new_playlist += '%s\n' % channel_url
     logger.info("Built remapped playlist")
     return new_playlist.strip()
