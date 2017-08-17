@@ -20,6 +20,7 @@ token = {
 ############################################################
 # CONFIG
 ############################################################
+
 USER = ""
 PASS = ""
 SITE = "viewms"
@@ -78,6 +79,19 @@ def dump_token():
     logger.debug("Dumped token.json")
 
 
+def array_flip(data):
+    return {int(v): k for k, v in data.items()}
+
+
+def find_between(s, first, last):
+    try:
+        start = s.index(first) + len(first)
+        end = s.index(last, start)
+        return s[start:end]
+    except ValueError:
+        return ""
+
+
 ############################################################
 # SSTV
 ############################################################
@@ -117,11 +131,41 @@ def check_token():
 
 def get_playlist():
     url = "http://sstv.fog.pt/utc/SmoothStreams.m3u8"
-    resp = urlopen(url).read()
-    channel_url = urljoin(SERVER_HOST, "%s/playlist.m3u8?channel=" % SERVER_PATH)
-    logger.debug("Retrieved and bridged SmoothStreams.m3u8")
-    resp = resp.replace("https:https://", "http://")
-    return resp.replace("pipe://#PATH# ", channel_url)
+    resp = urlopen(url).read().decode('utf-8')
+    logger.debug("Retrieved fogs SmoothStreams.m3u8")
+    return remap_playlist(resp)
+
+
+def remap_playlist(playlist):
+    logger.debug("Remapping playlist from fog")
+    # build id_map from chanlist.json by fog
+    url = 'http://sstv.fog.pt/utc/chanlist.json'
+    resp = loads(urlopen(url).read().decode("utf-8"))
+    id_map = array_flip(resp)
+    # build chan_map from existing playlist
+    chan_map = {}
+    for line in playlist.splitlines():
+        if not line.startswith('#EXTINF'):
+            continue
+        # logger.debug("Line: %r", line)
+        chan_name = find_between(line, 'tvg-name="', '"')
+        chan_num = int(find_between(line, 'tvg-num="', '"'))
+        chan_logo = find_between(line, 'tvg-logo="', '"').replace('https:https://', 'http://')
+        chan_logo = chan_logo if chan_logo.endswith('.png') else 'http://i.imgur.com/UyrGfW2.png'
+        chan_map[chan_num] = {
+            'name': chan_name,
+            'num': chan_num,
+            'logo': chan_logo
+        }
+    # build playlist using the data we have
+    new_playlist = "#EXTM3U\n"
+    for pos in range(1, len(chan_map) + 1):
+        channel_url = urljoin(SERVER_HOST, "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, pos))
+        new_playlist += '#EXTINF:-1 tvg-id="%s" tvg-name="%d" tvg-logo="%s" channel-id="%d",%s\n' % (
+            id_map[pos], pos, chan_map[pos]['logo'], pos, chan_map[pos]['name'])
+        new_playlist += '%s\n' % channel_url
+    logger.info("Built remapped playlist")
+    return new_playlist.strip()
 
 
 ############################################################
