@@ -1,0 +1,17 @@
+# /etc/systemd/system/sstv.service
+
+[Unit]
+Description=SmoothStreams TVirl Bridge
+After=network-online.target
+
+[Service]
+User=seed
+Group=seed
+Type=simple
+WorkingDirectory=/opt/scripts/sstv
+ExecStart=/opt/scripts/sstv/ss-tvirl.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
