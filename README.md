@@ -25,40 +25,40 @@ Setup is pretty straight forward, set your username and password in the script (
 You must enter the site you are a member of, their values can be seen below:
 
 ```json
-	services = {
-		'Live247': 'view247',
-		'Mystreams/Usport': 'viewms',
-		'StarStreams': 'viewss',
-		'MMA SR+': 'viewmmasr',
-		'StreamTVnow': 'viewstvn',
-		'MMA-TV/MyShout': 'mmatv'
-	}
+sites = {
+    "Live247": "view247",
+    "MyStreams/USport": "viewms",
+    "StarStreams": "viewss",
+    "MMA/SR+": "viewmmasr",
+    "StreamTVnow": "viewstvn",
+    "MMA-TV/MyShout": "mmatv",
+}
 ```
 
 You must enter the server you wish to use, their values can be seen below:
 
 ```json
-  servers = {
-    'EU Random': 'deu',
-    '   DE-Frankfurt': 'deu.de1',
-    '   NL': 'deu.nl',
-    '   NL-1': 'deu.nl1',
-    '   NL-2': 'deu.nl2',
-    '   NL-3': 'deu.nl3',
-    '   UK-London': 'deu.uk',
-    '   UK-London1': 'deu.uk1',
-    '   UK-London2': 'deu.uk2',
-    'US Random': 'dna',
-    '   East': 'dnae',
-    '   West': 'dnaw',
-    '   East-NJ': 'dnae1',
-    '   East-VA': 'dnae2',
-    '   East-Mtl': 'dnae3',
-    '   East-Tor': 'dnae4',
-    '   West-Phx': 'dnaw1',
-    '   West-SJ': 'dnaw2',
-    'Asia': 'dap'
-  }
+servers = {
+    "EU Random": "deu",
+    "DE-Frankfurt": "deu.de1",
+    "NL": "deu.nl",
+    "NL-1": "deu.nl1",
+    "NL-2": "deu.nl2",
+    "NL-3": "deu.nl3",
+    "UK-London": "deu.uk",
+    "UK-London1": "deu.uk1",
+    "UK-London2": "deu.uk2",
+    "US Random": "dna",
+    "US-East": "dnae",
+    "US-East-NJ": "dnae1",
+    "US-East-VA": "dnae2",
+    "US-East-MTL": "dnae3",
+    "US-East-TOR": "dnae4",
+    "US-West": "dnaw",
+    "US-West-PHX": "dnaw1",
+    "US-West-SJ": "dnaw2",
+    "Asia": "dap",
+}
 ```
 
 You must then enter the IP and port you want the built in server to listen on, ```0.0.0.0``` will be accessible publicly, and ```127.0.0.1``` will be accessible to local only.
