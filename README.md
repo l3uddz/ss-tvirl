@@ -19,7 +19,7 @@ This project may be compatible with QPython (if you can pip install flask), howe
 
 ## Setup
 
-Ensure the script is executable: ```chmod a+x ss-tvirl.py``
+Ensure the script is executable: ```chmod a+x ss-tvirl.py```
 
 Setup is pretty straight forward, set your username and password in the script (this is used to retrieve your hash token/renew it when it expires).
 You must enter the site you are a member of, their values can be seen below:
