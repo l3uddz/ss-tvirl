@@ -5,8 +5,13 @@ import sys
 from datetime import datetime, timedelta
 from json import load, loads, dump
 from logging.handlers import RotatingFileHandler
-from urllib import urlencode, urlopen
-from urlparse import urljoin
+
+try:
+    from urllib import urlencode, urlopen
+    from urlparse import urljoin
+except ImportError:
+    from urllib.parse import urlencode, urljoin
+    from urllib.request import urlopen 
 
 from flask import Flask, redirect, abort, request, Response
 
