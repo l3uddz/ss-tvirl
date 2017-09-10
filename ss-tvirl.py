@@ -5,13 +5,14 @@ import sys
 from datetime import datetime, timedelta
 from json import load, loads, dump
 from logging.handlers import RotatingFileHandler
+from xml.etree import ElementTree as ET
 
 try:
     from urllib import urlencode, urlopen
     from urlparse import urljoin
 except ImportError:
     from urllib.parse import urlencode, urljoin
-    from urllib.request import urlopen 
+    from urllib.request import urlopen
 
 from flask import Flask, redirect, abort, request, Response
 
@@ -134,44 +135,43 @@ def check_token():
             dump_token()
 
 
-def get_playlist():
-    url = "http://sstv.fog.pt/utc/SmoothStreams.m3u8"
-    resp = urlopen(url).read().decode('utf-8')
-    logger.debug("Retrieved fogs SmoothStreams.m3u8")
-    return remap_playlist(resp)
-
-
-def remap_playlist(playlist):
-    logger.debug("Remapping playlist from fog")
-    # build id_map from chanlist.json by fog
-    url = 'http://sstv.fog.pt/utc/chanlist.json'
-    resp = loads(urlopen(url).read().decode("utf-8"))
-    id_map = array_flip(resp)
-    # build chan_map from existing playlist
+def build_channel_map():
     chan_map = {}
-    for line in playlist.splitlines():
-        if not line.startswith('#EXTINF'):
-            continue
-        # logger.debug("Line: %r", line)
-        chan_name = find_between(line, 'tvg-name="', '"')
-        chan_num = int(find_between(line, 'tvg-num="', '"'))
-        chan_logo = find_between(line, 'tvg-logo="', '"').replace('https:https://', 'http://')
-        chan_logo = chan_logo if chan_logo.endswith('.png') else 'http://i.imgur.com/UyrGfW2.png'
-        chan_map[chan_num] = {
-            'name': chan_name,
-            'num': chan_num,
-            'logo': chan_logo
-        }
+    logger.debug("Loading epg from fog")
+    url = 'http://sstv.fog.pt/feed.xml'
+    resp = urlopen(url).read().decode("utf-8")
+    xml = ET.fromstring(resp)
+    for channel in xml.findall('channel'):
+        chan_map[int(channel[0].text)] = channel.attrib['id']
+    logger.debug("Built channel map with %d channels", len(chan_map))
+    return chan_map
+
+
+def build_playlist():
+    # fetch smoothstreams feed json
+    logger.debug("Loading feed from SmoothStreams")
+    url = 'http://fast-guide.smoothstreams.tv/feed.json'
+    feed = loads(urlopen(url).read().decode("utf-8"))
+    # fetch chan_map
+    chan_map = build_channel_map()
     # build playlist using the data we have
     new_playlist = "#EXTM3U\n"
     for pos in range(1, len(chan_map) + 1):
-        channel_url = urljoin(SERVER_HOST, "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, chan_map[pos]['num']))
+        # determine name
+        channel_name = feed[str(pos)]['name'][5:] if len(feed[str(pos)]['name'][5:]) > 1 else 'Unknown'
+        # build channel url
+        channel_url = urljoin(SERVER_HOST,
+                              "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, int(feed[str(pos)]['channel_id'])))
+        # choose logo
+        logo = feed[str(pos)]['img'] if feed[str(pos)]['img'].endswith('.png') else 'http://i.imgur.com/UyrGfW2.png'
+        # build playlist entry
         new_playlist += '#EXTINF:-1 tvg-id="%s" tvg-name="%d" tvg-logo="%s" channel-id="%d",%s\n' % (
-            id_map[chan_map[pos]['num']], chan_map[pos]['num'], chan_map[pos]['logo'], chan_map[pos]['num'],
-            chan_map[pos]['name'])
+            chan_map[pos], int(feed[str(pos)]['channel_id']), logo, int(feed[str(pos)]['channel_id']),
+            channel_name)
         new_playlist += '%s\n' % channel_url
-    logger.info("Built remapped playlist")
-    return new_playlist.strip()
+
+    logger.info("Built playlist")
+    return new_playlist
 
 
 ############################################################
@@ -197,7 +197,7 @@ def bridge(request_file):
 
         else:
             logger.info("All channels playlist was requested by %s", request.environ.get('REMOTE_ADDR'))
-            playlist = get_playlist()
+            playlist = build_playlist()
             logger.info("Sending playlist to %s", request.environ.get('REMOTE_ADDR'))
             return Response(playlist, mimetype='application/x-mpegURL')
 
