@@ -85,10 +85,6 @@ def dump_token():
     logger.debug("Dumped token.json")
 
 
-def array_flip(data):
-    return {int(v): k for k, v in data.items()}
-
-
 def find_between(s, first, last):
     try:
         start = s.index(first) + len(first)
@@ -141,7 +137,7 @@ def build_channel_map():
     url = 'http://sstv.fog.pt/feed.xml'
     resp = urlopen(url).read().decode("utf-8")
     xml = ET.fromstring(resp)
-    for channel in xml.findall('channel'):
+    for channel in xml.iterfind('./channel'):
         chan_map[int(channel[0].text)] = channel.attrib['id']
     logger.debug("Built channel map with %d channels", len(chan_map))
     return chan_map
