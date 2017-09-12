@@ -2,6 +2,8 @@
 import logging
 import os
 import sys
+import thread
+import time
 from datetime import datetime, timedelta
 from json import load, loads, dump
 from logging.handlers import RotatingFileHandler
@@ -22,6 +24,8 @@ token = {
     'hash': '',
     'expires': ''
 }
+
+playlist = ""
 
 ############################################################
 # CONFIG
@@ -107,7 +111,8 @@ def get_auth_token(user, passwd, site):
     resp = urlopen(url).read().decode("utf-8")
     data = loads(resp)
     if 'hash' not in data or 'valid' not in data:
-        sys.exit("There was no hash auth token returned from auth.SmoothStreams.tv...")
+        logger.error("There was no hash auth token returned from auth.SmoothStreams.tv...")
+        exit(1)
     else:
         token['hash'] = data['hash']
         token['expires'] = (datetime.now() + timedelta(minutes=data['valid'])).strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -170,12 +175,28 @@ def build_playlist():
     return new_playlist
 
 
+def thread_playlist():
+    global playlist
+
+    while True:
+        time.sleep(86400)
+        logger.info("Updating playlist...")
+        try:
+            tmp_playlist = build_playlist()
+            playlist = tmp_playlist
+            logger.info("Updated playlist!")
+        except:
+            logger.exception("Exception while updating playlist: ")
+
+
 ############################################################
 # TVIRL <-> SSTV BRIDGE
 ############################################################
 
 @app.route('/%s/<request_file>' % SERVER_PATH)
 def bridge(request_file):
+    global playlist, token
+
     if request_file.lower().startswith('epg.'):
         logger.info("EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
         return redirect('http://sstv.fog.pt/feed.xml', 302)
@@ -193,7 +214,6 @@ def bridge(request_file):
 
         else:
             logger.info("All channels playlist was requested by %s", request.environ.get('REMOTE_ADDR'))
-            playlist = build_playlist()
             logger.info("Sending playlist to %s", request.environ.get('REMOTE_ADDR'))
             return Response(playlist, mimetype='application/x-mpegURL')
 
@@ -211,6 +231,15 @@ if __name__ == "__main__":
     if os.path.exists('token.json'):
         load_token()
     check_token()
+
+    logger.info("Building initial playlist...")
+    try:
+        playlist = build_playlist()
+    except:
+        logger.exception("Exception while building initial playlist: ")
+        exit(1)
+
+    thread.start_new_thread(thread_playlist, ())
     logger.info("Listening on %s:%d at %s/", LISTEN_IP, LISTEN_PORT, urljoin(SERVER_HOST, SERVER_PATH))
     app.run(host=LISTEN_IP, port=LISTEN_PORT, threaded=True, debug=False)
     logger.info("Finished!")
