@@ -5,16 +5,16 @@ import sys
 import thread
 import time
 from datetime import datetime, timedelta
-from json import load, loads, dump
+from json import load, dump
 from logging.handlers import RotatingFileHandler
 from xml.etree import ElementTree as ET
 
+import requests
+
 try:
-    from urllib import urlencode, urlopen
     from urlparse import urljoin
 except ImportError:
-    from urllib.parse import urlencode, urljoin
-    from urllib.request import urlopen
+    from urllib.parse import urljoin
 
 from flask import Flask, redirect, abort, request, Response
 
@@ -103,13 +103,12 @@ def find_between(s, first, last):
 ############################################################
 
 def get_auth_token(user, passwd, site):
-    url = "http://auth.SmoothStreams.tv/hash_api.php?" + urlencode({
+    payload = {
         "username": user,
         "password": passwd,
         "site": site
-    })
-    resp = urlopen(url).read().decode("utf-8")
-    data = loads(resp)
+    }
+    data = requests.get('http://auth.SmoothStreams.tv/hash_api.php', params=payload).json()
     if 'hash' not in data or 'valid' not in data:
         logger.error("There was no hash auth token returned from auth.SmoothStreams.tv...")
         exit(1)
@@ -140,7 +139,7 @@ def build_channel_map():
     chan_map = {}
     logger.debug("Loading epg from fog")
     url = 'http://sstv.fog.pt/feed.xml'
-    resp = urlopen(url).read().decode("utf-8")
+    resp = requests.get(url).content
     xml = ET.fromstring(resp)
     for channel in xml.iterfind('./channel'):
         chan_map[int(channel[0].text)] = channel.attrib['id']
@@ -152,7 +151,7 @@ def build_playlist():
     # fetch smoothstreams feed json
     logger.debug("Loading feed from SmoothStreams")
     url = 'http://fast-guide.smoothstreams.tv/feed.json'
-    feed = loads(urlopen(url).read().decode("utf-8"))
+    feed = requests.get(url).json()
     # fetch chan_map
     chan_map = build_channel_map()
     # build playlist using the data we have
