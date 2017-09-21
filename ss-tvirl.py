@@ -2,7 +2,6 @@
 import logging
 import os
 import sys
-import thread
 import time
 from datetime import datetime, timedelta
 from json import load, dump
@@ -13,8 +12,10 @@ import requests
 
 try:
     from urlparse import urljoin
+    import thread    
 except ImportError:
     from urllib.parse import urljoin
+    import _thread
 
 from flask import Flask, redirect, abort, request, Response
 
@@ -238,7 +239,11 @@ if __name__ == "__main__":
         logger.exception("Exception while building initial playlist: ")
         exit(1)
 
-    thread.start_new_thread(thread_playlist, ())
+    try:
+        thread.start_new_thread(thread_playlist, ())
+    except:
+        _thread.start_new_thread(thread_playlist, ())	
+        
     logger.info("Listening on %s:%d at %s/", LISTEN_IP, LISTEN_PORT, urljoin(SERVER_HOST, SERVER_PATH))
     app.run(host=LISTEN_IP, port=LISTEN_PORT, threaded=True, debug=False)
     logger.info("Finished!")
