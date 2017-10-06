@@ -12,7 +12,7 @@ import requests
 
 try:
     from urlparse import urljoin
-    import thread    
+    import thread
 except ImportError:
     from urllib.parse import urljoin
     import _thread
@@ -159,7 +159,11 @@ def build_playlist():
     new_playlist = "#EXTM3U\n"
     for pos in range(1, len(chan_map) + 1):
         # determine name
-        channel_name = feed[str(pos)]['name'][5:] if len(feed[str(pos)]['name'][5:]) > 1 else 'Unknown'
+        if str(pos) in feed:
+            channel_name = feed[str(pos)]['name'][5:].strip() if len(feed[str(pos)]['name'][5:]) > 1 else 'Unknown'
+        else:
+            logger.error("Channel %d had no feed information from %s", pos, url)
+            continue
         # build channel url
         channel_url = urljoin(SERVER_HOST,
                               "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, int(feed[str(pos)]['channel_id'])))
@@ -242,8 +246,8 @@ if __name__ == "__main__":
     try:
         thread.start_new_thread(thread_playlist, ())
     except:
-        _thread.start_new_thread(thread_playlist, ())	
-        
+        _thread.start_new_thread(thread_playlist, ())
+
     logger.info("Listening on %s:%d at %s/", LISTEN_IP, LISTEN_PORT, urljoin(SERVER_HOST, SERVER_PATH))
     app.run(host=LISTEN_IP, port=LISTEN_PORT, threaded=True, debug=False)
     logger.info("Finished!")
