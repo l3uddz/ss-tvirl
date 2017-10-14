@@ -170,10 +170,13 @@ def build_playlist():
         # choose logo
         logo = feed[str(pos)]['img'] if feed[str(pos)]['img'].endswith('.png') else 'http://i.imgur.com/UyrGfW2.png'
         # build playlist entry
-        new_playlist += '#EXTINF:-1 tvg-id="%s" tvg-name="%d" tvg-logo="%s" channel-id="%d",%s\n' % (
-            chan_map[pos], int(feed[str(pos)]['channel_id']), logo, int(feed[str(pos)]['channel_id']),
-            channel_name)
-        new_playlist += '%s\n' % channel_url
+        try:
+            new_playlist += '#EXTINF:-1 tvg-id="%s" tvg-name="%d" tvg-logo="%s" channel-id="%d",%s\n' % (
+                chan_map[pos], int(feed[str(pos)]['channel_id']), logo, int(feed[str(pos)]['channel_id']),
+                channel_name)
+            new_playlist += '%s\n' % channel_url
+        except:
+            logger.exception("Exception while updating playlist: ")		
 
     logger.info("Built playlist")
     return new_playlist
