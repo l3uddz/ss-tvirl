@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import zlib
 from datetime import datetime, timedelta
 from json import load, dump
 from logging.handlers import RotatingFileHandler
@@ -27,6 +28,7 @@ token = {
 }
 
 playlist = ""
+xmltv = ""
 
 ############################################################
 # CONFIG
@@ -136,14 +138,29 @@ def check_token():
             dump_token()
 
 
+def fetch_xmltv_gzip():
+    global xmltv
+
+    logger.info("Loading compressed epg from fog")
+    # download gzip
+    url = 'https://sstv.fog.pt/epg/xmltv5.xml.gz'
+    resp = requests.get(url)
+    # uncompress gzip
+    data = zlib.decompress(resp.content, zlib.MAX_WBITS | 32)
+    logger.info("Decompressed xmltv5.xml.gz")
+    # store data in xmltv for epg requests
+    xmltv = data
+    return data
+
+
 def build_channel_map():
     chan_map = {}
-    logger.debug("Loading epg from fog")
-    url = 'http://sstv.fog.pt/feed.xml'
-    resp = requests.get(url).content
+    resp = fetch_xmltv_gzip()
     xml = ET.fromstring(resp)
+    pos = 0
     for channel in xml.iterfind('./channel'):
-        chan_map[int(channel[0].text)] = channel.attrib['id']
+        pos += 1
+        chan_map[pos] = channel.attrib['id']
     logger.debug("Built channel map with %d channels", len(chan_map))
     return chan_map
 
@@ -176,7 +193,7 @@ def build_playlist():
                 channel_name)
             new_playlist += '%s\n' % channel_url
         except:
-            logger.exception("Exception while updating playlist: ")		
+            logger.exception("Exception while updating playlist: ")
 
     logger.info("Built playlist")
     return new_playlist
@@ -202,11 +219,11 @@ def thread_playlist():
 
 @app.route('/%s/<request_file>' % SERVER_PATH)
 def bridge(request_file):
-    global playlist, token
+    global playlist, xmltv, token
 
     if request_file.lower().startswith('epg.'):
         logger.info("EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
-        return redirect('http://sstv.fog.pt/feed.xml', 302)
+        return Response(xmltv, mimetype='application/xml')
 
     elif request_file.lower() == 'playlist.m3u8':
         if request.args.get('channel'):
