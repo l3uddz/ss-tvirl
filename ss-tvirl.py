@@ -1,6 +1,8 @@
 #!/usr/bin/env python2.7
 import logging
 import os
+import shlex
+import subprocess
 import sys
 import time
 import zlib
@@ -10,6 +12,13 @@ from logging.handlers import RotatingFileHandler
 from xml.etree import ElementTree as ET
 
 import requests
+from gevent.select import select
+from gevent.wsgi import WSGIServer
+
+try:
+    from shlex import quote as cmd_quote
+except ImportError:
+    from pipes import quote as cmd_quote
 
 try:
     from urlparse import urljoin
@@ -18,7 +27,7 @@ except ImportError:
     from urllib.parse import urljoin
     import _thread
 
-from flask import Flask, redirect, abort, request, Response
+from flask import Flask, abort, request, Response, jsonify, render_template, redirect
 
 app = Flask(__name__)
 
@@ -29,6 +38,8 @@ token = {
 
 playlist = ""
 xmltv = ""
+plex_xmltv = ""
+playlist_dict = {}
 
 ############################################################
 # CONFIG
@@ -36,12 +47,15 @@ xmltv = ""
 
 USER = ""
 PASS = ""
-SITE = "viewms"
+SITE = "viewstvn"
 SRVR = "deu"
-LISTEN_IP = "127.0.0.1"
+LISTEN_IP = "0.0.0.0"
 LISTEN_PORT = 6752
-SERVER_HOST = "http://127.0.0.1:" + str(LISTEN_PORT)
-SERVER_PATH = "sstv"
+SERVER_HOST = "http://your-dynamic-dns.com:" + str(LISTEN_PORT)
+TVIRL_SERVER_PATH = "sstv"
+PLEX_SERVER_PATH = "plex"
+PLEX_BUFFER_SIZE = 256
+PLEX_FFMPEG_PATH = "/usr/bin/ffmpeg"
 
 ############################################################
 # INIT
@@ -51,7 +65,7 @@ SERVER_PATH = "sstv"
 log_formatter = logging.Formatter(
     '%(asctime)s - %(levelname)-10s - %(name)-10s -  %(funcName)-25s- %(message)s')
 
-logger = logging.getLogger('ss-tvirl')
+logger = logging.getLogger('ss-tvirl-plexdvr')
 logger.setLevel(logging.DEBUG)
 logging.getLogger('werkzeug').setLevel(logging.ERROR)
 
@@ -102,7 +116,7 @@ def find_between(s, first, last):
 
 
 ############################################################
-# SSTV
+# SSTV / PLEX
 ############################################################
 
 def get_auth_token(user, passwd, site):
@@ -139,7 +153,7 @@ def check_token():
 
 
 def fetch_xmltv_gzip():
-    global xmltv
+    global xmltv, plex_xmltv
 
     logger.info("Loading compressed epg from fog")
     # download gzip
@@ -150,7 +164,30 @@ def fetch_xmltv_gzip():
     logger.info("Decompressed xmltv5.xml.gz")
     # store data in xmltv for epg requests
     xmltv = data
+    plex_xmltv = fog_to_plex_epg(data)
     return data
+
+
+def fog_to_plex_epg(epg_data):
+    tree = ET.fromstring(epg_data)
+    chan_map = {}
+    pos = 0
+
+    logger.info("Processing fog epg to plex epg")
+
+    # change channel ids and build chan_map
+    for a in tree.iterfind('channel'):
+        pos += 1
+        chan_map[a.attrib['id']] = str(pos)
+        a.attrib['id'] = str(pos)
+
+    # loop programmes
+    for a in tree.iterfind('programme'):
+        # change channel
+        a.attrib['channel'] = chan_map[a.attrib['channel']]
+
+    logger.info("Built plex epg")
+    return ET.tostring(tree)
 
 
 def build_channel_map():
@@ -166,6 +203,9 @@ def build_channel_map():
 
 
 def build_playlist():
+    global playlist_dict
+    tmp_playlist_dict = {}
+
     # fetch smoothstreams feed json
     logger.debug("Loading feed from SmoothStreams")
     url = 'http://fast-guide.smoothstreams.tv/feed.json'
@@ -183,7 +223,7 @@ def build_playlist():
             continue
         # build channel url
         channel_url = urljoin(SERVER_HOST,
-                              "%s/playlist.m3u8?channel=%d" % (SERVER_PATH, int(feed[str(pos)]['channel_id'])))
+                              "%s/playlist.m3u8?channel=%d" % (TVIRL_SERVER_PATH, int(feed[str(pos)]['channel_id'])))
         # choose logo
         logo = feed[str(pos)]['img'] if feed[str(pos)]['img'].endswith('.png') else 'http://i.imgur.com/UyrGfW2.png'
         # build playlist entry
@@ -192,9 +232,17 @@ def build_playlist():
                 chan_map[pos], int(feed[str(pos)]['channel_id']), logo, int(feed[str(pos)]['channel_id']),
                 channel_name)
             new_playlist += '%s\n' % channel_url
+            # add channel to tmp_playlist_dict
+            tmp_playlist_dict[int(feed[str(pos)]['channel_id'])] = {
+                'channel_name': channel_name,
+                'channel_number': int(feed[str(pos)]['channel_id']),
+                'channel_id': chan_map[pos],
+                'channel_url': channel_url
+            }
         except:
             logger.exception("Exception while updating playlist: ")
 
+    playlist_dict = tmp_playlist_dict
     logger.info("Built playlist")
     return new_playlist
 
@@ -213,37 +261,146 @@ def thread_playlist():
             logger.exception("Exception while updating playlist: ")
 
 
+def ffmpeg_pipe_stream(stream_url):
+    global PLEX_FFMPEG_PATH, PLEX_BUFFER_SIZE
+
+    pipe_cmd = "%s -re -i %s " \
+               "-codec copy " \
+               "-nostats " \
+               "-loglevel 0 " \
+               "-bsf:v h264_mp4toannexb " \
+               "-f mpegts " \
+               "-tune zerolatency " \
+               "pipe:1" % (PLEX_FFMPEG_PATH, cmd_quote(stream_url))
+
+    p = subprocess.Popen(shlex.split(pipe_cmd), stdout=subprocess.PIPE, bufsize=-1)
+    try:
+        pipes = [p.stdout]
+        while pipes:
+            ready, _, _ = select(pipes, [], [])
+            for pipe in ready:
+                data = pipe.read(PLEX_BUFFER_SIZE << 10)
+                if data:
+                    yield data
+                else:
+                    pipes.remove(pipe)
+    except Exception:
+        pass
+    except GeneratorExit:
+        pass
+
+    try:
+        p.terminate()
+    except Exception:
+        pass
+    return
+
+
+############################################################
+# HDHOMERUN <-> PLEX DVR <-> SSTV BRIDGE
+############################################################
+
+discoverData = {
+    'FriendlyName': 'ss-tvirl-plexdvr',
+    'Manufacturer': 'Silicondust',
+    'ModelNumber': 'HDTC-2US',
+    'FirmwareName': 'hdhomeruntc_atsc',
+    'TunerCount': 6,
+    'FirmwareVersion': '20150826',
+    'DeviceID': '12345678',
+    'DeviceAuth': 'test1234',
+    'BaseURL': '%s' % SERVER_HOST,
+    'LineupURL': '%s/lineup.json' % SERVER_HOST
+}
+
+
+@app.route('/%s/<request_file>' % PLEX_SERVER_PATH)
+def plex_bridge(request_file):
+    global plex_xmltv, playlist_dict
+    lineup = []
+
+    if request_file.lower().startswith('epg.'):
+        # EPG request here
+        logger.info("Plex EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
+        return Response(plex_xmltv, mimetype='application/xml')
+    elif request_file.lower() == 'playlist.m3u8' and request.args.get('channel'):
+        # Plex requested a channel, lets return the transcoded stream
+        channel = request.args.get('channel')
+        channel = channel[:channel.index("?")] if '?' in channel else channel
+        sanitized_channel = ("0%d" % int(channel)) if int(channel) < 10 else channel
+        logger.info("Channel %s was requested from Plex by %s", sanitized_channel,
+                    request.environ.get('REMOTE_ADDR'))
+
+        check_token()
+        rtmp_url = "rtmp://%s.SmoothStreams.tv:3625/%s?wmsAuthSign=%s/ch%sq1.stream" % (
+            SRVR, SITE, token['hash'], sanitized_channel)
+        return Response(ffmpeg_pipe_stream(rtmp_url), mimetype='video/mpeg2')
+    elif request_file.lower().startswith('discover.json'):
+        # discover.json request here
+        return jsonify(discoverData)
+    elif request_file.lower().startswith('lineup_status.json'):
+        # lineup_status.json request here
+        return jsonify({
+            'ScanInProgress': 0,
+            'ScanPossible': 1,
+            'Source': "Cable",
+            'SourceList': ['Cable']
+        })
+    elif request_file.lower().startswith('lineup.json'):
+        # lineup.json request here
+        for channel_number, channel_data in playlist_dict.items():
+            lineup.append({'GuideNumber': str(channel_number),
+                           'GuideName': channel_data['channel_name'],
+                           'URL': channel_data['channel_url'].replace(TVIRL_SERVER_PATH, PLEX_SERVER_PATH)
+                           })
+
+        return jsonify(lineup)
+    elif request_file.lower().startswith('lineup.post'):
+        # lineup.post request here
+        return ''
+    elif request_file.lower().startswith('device.xml'):
+        # device.xml request here
+        return render_template('device.xml', data=discoverData), {'Content-Type': 'application/xml'}
+    else:
+        logger.info("Unknown requested %r by %s", request_file, request.environ.get('REMOTE_ADDR'))
+        return abort(404, "Unknown request")
+
+
 ############################################################
 # TVIRL <-> SSTV BRIDGE
 ############################################################
 
-@app.route('/%s/<request_file>' % SERVER_PATH)
-def bridge(request_file):
+@app.route('/%s/<request_file>' % TVIRL_SERVER_PATH)
+def tvirl_bridge(request_file):
     global playlist, xmltv, token
 
     if request_file.lower().startswith('epg.'):
-        logger.info("EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
+        # EPG request here
+        logger.info("TvIRL EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
         return Response(xmltv, mimetype='application/xml')
 
     elif request_file.lower() == 'playlist.m3u8':
         if request.args.get('channel'):
-            sanitized_channel = ("0%d" % int(request.args.get('channel'))) if int(
-                request.args.get('channel')) < 10 else request.args.get('channel')
-            logger.info("Channel %s playlist was requested by %s", sanitized_channel,
+            # tvIRL Requested this channel, let's redirect them directly to SmoothStreams
+            channel = request.args.get('channel')
+            channel = channel[:channel.index("?")] if '?' in channel else channel
+            sanitized_channel = ("0%d" % int(channel)) if int(channel) < 10 else channel
+            logger.info("Channel %s was requested from TvIRL by %s", sanitized_channel,
                         request.environ.get('REMOTE_ADDR'))
+
             check_token()
-            ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/playlist.m3u8?wmsAuthSign=%s==" % (
+            ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/playlist.m3u8?wmsAuthSign=%s" % (
                 SRVR, SITE, sanitized_channel, token['hash'])
             return redirect(ss_url, 302)
 
         else:
-            logger.info("All channels playlist was requested by %s", request.environ.get('REMOTE_ADDR'))
-            logger.info("Sending playlist to %s", request.environ.get('REMOTE_ADDR'))
+            # tvIRL Requested the playlist of all available channels, lets return it too them
+            logger.info("All channels playlist was requested from TvIRL by %s", request.environ.get('REMOTE_ADDR'))
             return Response(playlist, mimetype='application/x-mpegURL')
 
     else:
         logger.info("Unknown requested %r by %s", request_file, request.environ.get('REMOTE_ADDR'))
-        abort(404, "Unknown request")
+        return abort(404, "Unknown request")
 
 
 ############################################################
@@ -268,6 +425,11 @@ if __name__ == "__main__":
     except:
         _thread.start_new_thread(thread_playlist, ())
 
-    logger.info("Listening on %s:%d at %s/", LISTEN_IP, LISTEN_PORT, urljoin(SERVER_HOST, SERVER_PATH))
-    app.run(host=LISTEN_IP, port=LISTEN_PORT, threaded=True, debug=False)
+    logger.info("Listening on %s:%d at %s/ for Live Channels + tvIRL", LISTEN_IP, LISTEN_PORT,
+                urljoin(SERVER_HOST, TVIRL_SERVER_PATH))
+    logger.info("Listening on %s:%d at %s/ for Plex DVR", LISTEN_IP, LISTEN_PORT,
+                urljoin(SERVER_HOST, PLEX_SERVER_PATH))
+
+    server = WSGIServer((LISTEN_IP, LISTEN_PORT), app, log=None)
+    server.serve_forever()
     logger.info("Finished!")

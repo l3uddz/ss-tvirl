@@ -1,5 +1,7 @@
 # ss-tvirl
-SmoothStreams script to supply TVirl with SmoothStreams support. EPG and playlist is retrieved via fog and altered/sent to TVirl. Hash token is automatically renewed when they expire.
+SmoothStreams script to supply TvIRL with SmoothStreams support. EPG and playlist is retrieved via fog and altered/sent to TVirl. Hash token is automatically renewed when they expire.
+
+It also has the added capability of feeding streams to Plex DVR!
 
 ## Credits
 
@@ -13,9 +15,11 @@ And ofcourse, thanks to SmoothStreams for such a great service.
 
 All that is required is python 2.7 and the Flask pip module, you can install this by ```sudo python -m pip install -r requirements.txt```
 
-Ofcourse TVirl and Live Channels for Android TV are also required, obviously.
+Ofcourse TvIRL and Live Channels for Android TV are also required.
 
-This project may be compatible with QPython (if you can pip install flask), however that is untested, and not a requirement of mine.
+Plex DVR requires ffmpeg, you can install this by ```sudo apt install ffmpeg```
+
+This project may be compatible with QPython (if you can pip install flask / gevent), however that is untested, and not a requirement of mine.
 
 ## Setup
 
@@ -27,7 +31,6 @@ You must enter the site you are a member of, their values can be seen below:
 ```json
 sites = {
     "Live247": "view247",
-    "MyStreams/USport": "viewms",
     "StarStreams": "viewss",
     "MMA/SR+": "viewmmasr",
     "StreamTVnow": "viewstvn",
@@ -61,11 +64,15 @@ servers = {
 }
 ```
 
-You must then enter the IP and port you want the built in server to listen on, ```0.0.0.0``` will be accessible publicly, and ```127.0.0.1``` will be accessible to local only.
+You must then enter the IP and port you want the built in server to listen on, ```0.0.0.0``` will be accessible publicly, and ```127.0.0.1``` will be accessible to local only. If you are on a network, specify your network IP so other devices on the network can also access it.
 
-SERVER_HOST only needs to be changed if your listening on ```0.0.0.0```, this is a reachable location that TVirl will visit to start a stream, it will be redirected directly to SmoothStreams after the token has been checked/renewed.
+SERVER_HOST only needs to be changed if your listening on ```0.0.0.0```, this is a reachable location that tvIRL / Plex DVR will visit to start a stream. TvIRL will be redirected directly to SmoothStreams after the token has been checked/renewed and Plex DVR will proxy the stream via ffmpeg.
 
-SERVER_PATH can be used to specify a custom path for the playlist and epg file. This allows some sort of protection without requiring htaccess and all that jazz, just enter a suitably long/random path here.
+TVIRL_SERVER_PATH + PLEX_SERVER_PATH can be used to specify a custom path for the playlist and epg files. This allows some sort of protection without requiring htaccess and all that jazz, just enter a suitably long/random path here.
+
+PLEX_BUFFER_SIZE is how many KB to read from ffmpeg before sending to the client. The default should be fine, however this may need some fine-tuning by yourself until you are happy. 256 - 512 seems to be pretty safe bets.
+
+PLEX_FFMPEG_PATH is the path to the ffmpeg binary, the default should be fine, however double check with ``which ffmpeg``.
 
 ## Running
 
@@ -94,6 +101,16 @@ Setting TVirl couldnt be any simpler, simply install TVirl, add a new channel fr
 When it asks for the EPG url, same as above its simply: ```http://SERVER_HOST:PORT/SERVER_PATH/epg.xml```
 
 Once this is done and it has been scanned in successfully, you can enable the channel source in Live Channels settings menu and begin watching, hopefully!
+
+## Plex DVR
+
+Setting Plex DVR up is very straightforward as-well. Simply go to the Live TV section in the settings menu of your Plex Server.
+
+Click the ``Don't see your device?`` where you will be asked to enter the device address, this will be ``SERVER_HOST:PORT/PLEX_SERVER_PATH`` (e.g. ``your-dynamic-dns.com:6752/plex``). After pressing continue, you should be presented with the channel list, press continue. 
+
+You should now be asked to enter a post code/zip code, above that is some yellow text, press this text where you will be-able to provide an XMLTV location. This location will be ``http://SERVER_HOST:PORT/SERVER_PATH/epg.xml`` (e.g. ``http://your-dynamic-address.com:6752/plex/epg.xml``). Press continue and it should load the EPG, press continue again. 
+
+Now you must wait for Plex to finish the setup process. Upon completion you should now have SmoothStreams access directly from within Plex.
 
 ## Demo
 
