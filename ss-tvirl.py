@@ -125,9 +125,11 @@ def get_auth_token(user, passwd, site):
         "password": passwd,
         "site": site
     }
-    data = requests.get('http://auth.SmoothStreams.tv/hash_api.php', params=payload).json()
+    data = requests.get(
+        'http://auth.SmoothStreams.tv/hash_api.php' if 'mma' not in site else 'https://www.mma-tv.net/loginForm.php',
+        params=payload).json()
     if 'hash' not in data or 'valid' not in data:
-        logger.error("There was no hash auth token returned from auth.SmoothStreams.tv...")
+        logger.error("There was no hash auth token returned from auth.SmoothStreams.tv: %s", data)
         exit(1)
     else:
         token['hash'] = data['hash']
