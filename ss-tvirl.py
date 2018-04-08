@@ -159,7 +159,7 @@ def fetch_xmltv_gzip():
 
     logger.info("Loading compressed epg from fog")
     # download gzip
-    url = 'https://sstv.fog.pt/epg/xmltv5.xml.gz'
+    url = 'https://guide.smoothstreams.tv/altepg/xmltv5.xml.gz'
     resp = requests.get(url)
     # uncompress gzip
     data = zlib.decompress(resp.content, zlib.MAX_WBITS | 32)
