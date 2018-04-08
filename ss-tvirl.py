@@ -157,7 +157,7 @@ def check_token():
 def fetch_xmltv_gzip():
     global xmltv, plex_xmltv
 
-    logger.info("Loading compressed epg from fog")
+    logger.info("Loading compressed epg from SmoothStreams")
     # download gzip
     url = 'https://guide.smoothstreams.tv/altepg/xmltv5.xml.gz'
     resp = requests.get(url)
