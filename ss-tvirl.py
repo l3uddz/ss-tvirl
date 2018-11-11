@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 import logging
 import os
 import shlex
@@ -13,7 +13,11 @@ from xml.etree import ElementTree as ET
 
 import requests
 from gevent.select import select
-from gevent.wsgi import WSGIServer
+
+try:
+    from gevent.wsgi import WSGIServer
+except ImportError:
+    from gevent.pywsgi import WSGIServer
 
 try:
     from shlex import quote as cmd_quote
@@ -53,9 +57,12 @@ LISTEN_IP = "0.0.0.0"
 LISTEN_PORT = 6752
 SERVER_HOST = "http://your-dynamic-dns.com:" + str(LISTEN_PORT)
 TVIRL_SERVER_PATH = "sstv"
+TVIRL_PROXY_STREAM = True
+TVIRL_PROXY_BUFFER_SIZE = 1024
 PLEX_SERVER_PATH = "plex"
-PLEX_BUFFER_SIZE = 256
+PLEX_BUFFER_SIZE = 1024
 PLEX_FFMPEG_PATH = "/usr/bin/ffmpeg"
+
 
 ############################################################
 # INIT
@@ -76,11 +83,14 @@ console_handler.setFormatter(log_formatter)
 logger.addHandler(console_handler)
 
 # Rotating Log Files
-file_handler = RotatingFileHandler(os.path.join(os.path.dirname(sys.argv[0]), 'status.log'), maxBytes=1024 * 1024 * 2,
-                                   backupCount=5)
+file_handler = RotatingFileHandler(os.path.join(os.path.dirname(os.path.realpath(sys.argv[0])), 'activity.log'),
+                                   maxBytes=1024 * 1024 * 2, backupCount=5)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(log_formatter)
 logger.addHandler(file_handler)
+
+# Session Ids
+session_ids = {}
 
 ############################################################
 # MISC
@@ -298,6 +308,54 @@ def ffmpeg_pipe_stream(stream_url):
     return
 
 
+def generate_data_from_response(resp, chunk=250000):
+    for data_chunk in resp.stream(chunk, decode_content=False):
+        yield data_chunk
+
+
+def serve_partial(stream_url, range_header, channel=None):
+    global session_ids
+
+    # Make request to SmoothStreams
+    headers = {'Range': range_header}
+    r = requests.get(stream_url, headers=headers, timeout=5, stream=True)
+
+    if 'playlist.m3u8' in stream_url and channel is not None:
+        # this is a serve partial for playlist.m3u8 - we need to grab the nimblesessionid and store the channel
+        resp_content = r.text
+
+        session_id = find_between(resp_content, 'nimblesessionid=', '&wmsAuthSign=')
+        if session_id:
+            logger.info("Proxy stream commencing for channel %s with nimblesessionid: %s", channel, session_id)
+            session_ids[session_id] = channel
+        else:
+            logger.error("Failed to parse nimblesessionid from playlist.m3i8 for channel %s:\n\n%s", channel,
+                         resp_content)
+            return abort(500)
+
+        resp = Response(resp_content, 206, direct_passthrough=True)
+        resp.headers.add('Content-Range', r.headers.get('Content-Range'))
+        resp.headers.add('Content-Length', r.headers.get('Content-Length'))
+        resp.headers.add('Content-Type', r.headers.get('Content-Type'))
+        return resp
+
+    # Build response
+    rv = Response(generate_data_from_response(r.raw, chunk=TVIRL_PROXY_BUFFER_SIZE), 206, direct_passthrough=True)
+    rv.headers.add('Content-Range', r.headers.get('Content-Range'))
+    rv.headers.add('Content-Length', r.headers.get('Content-Length'))
+    rv.headers.add('Content-Type', r.headers.get('Content-Type'))
+    return rv
+
+
+def get_session_channel(session_id):
+    global session_ids
+    try:
+        return session_ids[session_id]
+    except Exception:
+        logger.exception("Failed to find channel for nimblesessionid %s: ", session_id)
+    return None
+
+
 ############################################################
 # HDHOMERUN <-> PLEX DVR <-> SSTV BRIDGE
 ############################################################
@@ -374,9 +432,43 @@ def plex_bridge(request_file):
 
 @app.route('/%s/<request_file>' % TVIRL_SERVER_PATH)
 def tvirl_bridge(request_file):
-    global playlist, xmltv, token
+    global playlist, xmltv, token, session_ids
 
-    if request_file.lower().startswith('epg.'):
+    if request_file.lower().endswith('.ts'):
+        # this is a request from a proxied stream
+        check_token()
+
+        session_channel = get_session_channel(request.args.get('nimblesessionid', ''))
+        if not session_channel:
+            return abort(500)
+
+        ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/%s?nimblesessionid=%s&wmsAuthSign=%s" % (
+            SRVR, SITE, session_channel, request_file, request.args.get('nimblesessionid', ''),
+            request.args.get('wmsAuthSign', token['hash']))
+        try:
+            return serve_partial(ss_url, request.headers.get('Range', 'bytes=0-'))
+        except Exception:
+            pass
+        return abort(500)
+
+    elif request_file.lower().startswith('chunks.m3u8'):
+        # this is request from a proxied stream
+        check_token()
+
+        session_channel = get_session_channel(request.args.get('nimblesessionid', ''))
+        if not session_channel:
+            return abort(500)
+
+        ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/chunks.m3u8?nimblesessionid=%s&wmsAuthSign=%s" % (
+            SRVR, SITE, session_channel, request.args.get('nimblesessionid', ''),
+            request.args.get('wmsAuthSign', token['hash']))
+        try:
+            return serve_partial(ss_url, request.headers.get('Range', 'bytes=0-'))
+        except Exception:
+            pass
+        return abort(500)
+
+    elif request_file.lower().startswith('epg.'):
         # EPG request here
         logger.info("TvIRL EPG was requested by %s", request.environ.get('REMOTE_ADDR'))
         return Response(xmltv, mimetype='application/xml')
@@ -393,7 +485,18 @@ def tvirl_bridge(request_file):
             check_token()
             ss_url = "http://%s.SmoothStreams.tv:9100/%s/ch%sq1.stream/playlist.m3u8?wmsAuthSign=%s" % (
                 SRVR, SITE, sanitized_channel, token['hash'])
-            return redirect(ss_url, 302)
+            if not TVIRL_PROXY_STREAM:
+                logger.info("Redirecting request from %s directly to the SmoothStreams stream for channel %s",
+                            request.environ.get('REMOTE_ADDR'), sanitized_channel)
+                return redirect(ss_url, 302)
+            else:
+                logger.info("Initializing proxy stream stream request from %s for channel %s",
+                            request.environ.get('REMOTE_ADDR'), sanitized_channel)
+                try:
+                    return serve_partial(ss_url, request.headers.get('Range', 'bytes=0-'), channel=sanitized_channel)
+                except Exception:
+                    pass
+                return abort(500)
 
         else:
             # tvIRL Requested the playlist of all available channels, lets return it too them
