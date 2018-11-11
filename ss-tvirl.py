@@ -63,14 +63,13 @@ PLEX_SERVER_PATH = "plex"
 PLEX_BUFFER_SIZE = 1024
 PLEX_FFMPEG_PATH = "/usr/bin/ffmpeg"
 
-
 ############################################################
 # INIT
 ############################################################
 
 # Setup logging
 log_formatter = logging.Formatter(
-    '%(asctime)s - %(levelname)-10s - %(name)-10s -  %(funcName)-25s- %(message)s')
+    '%(asctime)s - %(levelname)-10s - %(name)-10s -  %(funcName)-40s - %(message)s')
 
 logger = logging.getLogger('ss-tvirl-plexdvr')
 logger.setLevel(logging.DEBUG)
@@ -308,8 +307,22 @@ def ffmpeg_pipe_stream(stream_url):
     return
 
 
-def generate_data_from_response(resp, chunk=250000):
+def generate_data_from_response(resp, chunk=250000, channel=None):
+    global session_ids
+
     for data_chunk in resp.stream(chunk, decode_content=False):
+        if channel is not None and 'nimblesessionid' in str(data_chunk):
+            # check for nimblesessionid
+            session_id = find_between(str(data_chunk), 'nimblesessionid=', '&wmsAuthSign=')
+            if session_id:
+                logger.info("Proxy stream commencing for channel %s with nimblesessionid: %s", channel, session_id)
+                session_ids[session_id] = channel
+            else:
+                logger.error("Failed to parse nimblesessionid from playlist.m3i8 for channel %s:\n\n%s", channel,
+                             str(data_chunk))
+                return abort(500)
+
+        # return chunk
         yield data_chunk
 
 
@@ -322,22 +335,13 @@ def serve_partial(stream_url, range_header, channel=None):
 
     if 'playlist.m3u8' in stream_url and channel is not None:
         # this is a serve partial for playlist.m3u8 - we need to grab the nimblesessionid and store the channel
-        resp_content = r.text
-
-        session_id = find_between(resp_content, 'nimblesessionid=', '&wmsAuthSign=')
-        if session_id:
-            logger.info("Proxy stream commencing for channel %s with nimblesessionid: %s", channel, session_id)
-            session_ids[session_id] = channel
-        else:
-            logger.error("Failed to parse nimblesessionid from playlist.m3i8 for channel %s:\n\n%s", channel,
-                         resp_content)
-            return abort(500)
-
-        resp = Response(resp_content, 206, direct_passthrough=True)
-        resp.headers.add('Content-Range', r.headers.get('Content-Range'))
-        resp.headers.add('Content-Length', r.headers.get('Content-Length'))
-        resp.headers.add('Content-Type', r.headers.get('Content-Type'))
-        return resp
+        # Build response
+        rv = Response(generate_data_from_response(r.raw, chunk=TVIRL_PROXY_BUFFER_SIZE, channel=channel), 206,
+                      direct_passthrough=True)
+        rv.headers.add('Content-Range', r.headers.get('Content-Range'))
+        rv.headers.add('Content-Length', r.headers.get('Content-Length'))
+        rv.headers.add('Content-Type', r.headers.get('Content-Type'))
+        return rv
 
     # Build response
     rv = Response(generate_data_from_response(r.raw, chunk=TVIRL_PROXY_BUFFER_SIZE), 206, direct_passthrough=True)
